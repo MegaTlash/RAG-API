@@ -40,7 +40,6 @@ export class App implements AfterViewInit {
   // ... other element properties
 
   // --- API Configuration ---
-  private readonly API_KEY = "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";
 
   // --- State Properties ---
   private currentChatId: string | null = null;
