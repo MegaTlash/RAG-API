@@ -1,5 +1,6 @@
 # app/main.py
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from app.model import QueryRequest, QueryResponse, UploadResponse, ChatHistoryResponse
 import logging
 from app.utils.rag import RAG
@@ -13,6 +14,15 @@ from dotenv import load_dotenv, find_dotenv
 
 
 app = FastAPI()
+
+# Add the CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:4200"],  # Allow your Angular app's origin
+    allow_credentials=True,
+    allow_methods=["*"],  # Or be more specific, e.g., ["GET", "POST"]
+    allow_headers=["*"],  # Or be more specific
+)
 
 
 load_dotenv(find_dotenv())  # Loads .env file contents into the application based on key-value pairs defined therein, making them accessible via 'os' module functions like os.getenv().
