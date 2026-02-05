@@ -206,6 +206,7 @@ export class App implements AfterViewInit {
     }
   }
   */
+  
   private async sendMessage(): Promise<void> {
     const userMessageContent = this.userInput.value.trim();
     if (!userMessageContent || this.isTyping) {
@@ -268,8 +269,6 @@ export class App implements AfterViewInit {
       this.renderChatHistory();
     }
   }
-
-
 
   private startNewChat(): void {
     this.currentChatId = `chat_${Date.now()}`;
@@ -373,5 +372,4 @@ export class App implements AfterViewInit {
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
   }
 
-  
 }
