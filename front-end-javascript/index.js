@@ -18,7 +18,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const fileUploadInput = document.getElementById("file-upload");
 
   // API Configuration
-  const API_URL = "http://localhost:3000/api/chat";
+  const API_URL = "http://localhost:8000";
 
   // State variables
   let currentChatId = null;
@@ -202,7 +202,7 @@ document.addEventListener("DOMContentLoaded", () => {
         );
         previewContainer.style.display = "none";
         previewContainer.innerHTML = "";
-        pendingFile = null;
+        
         resolve();
       };
 
@@ -253,6 +253,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // Clear input and reset height
     userInput.value = "";
     userInput.style.height = "auto";
+    
+    let lastMessage = message;
 
     // If there's text, add it as a user message
     if (message) {
@@ -279,15 +281,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // If a file was selected, process it now
     if (pendingFile) {
-      await processPendingFile();
+        await processPendingFile();
     }
-
+    
     saveChatHistory();
 
     try {
       showTypingIndicator();
+      let response;
       // Stream the AI response and update UI letter-by-letter
-      const response = await getAIResponse(currentChatId);
+      if(pendingFile){
+        response = await getAIResponseWithFile(lastMessage, pendingFile);
+        pendingFile = null;
+      }
+      else{
+        response = await getAIResponse(currentChatId);
+      }
+      
       // The UI is updated during streaming. Save the final text.
       chatHistory[currentChatId].messages.push({
         role: "assistant",
@@ -304,6 +314,105 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  async function getAIResponseWithFile(query, file) {
+    isTyping = true;
+    stopGeneration = false;
+    regenerateResponseButton.style.display = "none";
+    stopResponseButton.style.display = "inline-block";
+
+    try {
+        const formData = new FormData();
+        formData.append("query", query);
+        formData.append("file", file);
+
+      const response = await fetch(
+        API_URL + "/querywithscreenshot",
+        {
+          method: "POST",
+          body: formData
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to get response");
+      }
+
+      const messageDiv = document.createElement("div");
+      messageDiv.className = "message ai";
+      const messageContent = document.createElement("div");
+      messageContent.className = "message-content";
+      messageDiv.appendChild(messageContent);
+      messagesContainer.appendChild(messageDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let typingBuffer = "";
+      let accumulatedText = "";
+      let isProcessingBuffer = false;
+
+      function processBuffer() {
+        if (typingBuffer.length > 0 && !stopGeneration) {
+          accumulatedText += typingBuffer[0];
+          typingBuffer = typingBuffer.slice(1);
+          messageContent.innerHTML = getStableRendering(accumulatedText);
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+          setTimeout(processBuffer, typingSpeed);
+        } else {
+          isProcessingBuffer = false;
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const obj = JSON.parse(line);
+              if (obj.response) {
+                const text = obj.response;
+                if (text) {
+                  typingBuffer += text;
+                  if (!isProcessingBuffer) {
+                    isProcessingBuffer = true;
+                    processBuffer();
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("JSON parse error", e);
+            }
+          }
+        }
+      }
+
+      while (isProcessingBuffer) {
+        await new Promise((resolve) => setTimeout(resolve, typingSpeed));
+      }
+
+      isTyping = false;
+      removeTypingIndicator();
+      stopResponseButton.style.display = "none";
+      regenerateResponseButton.style.display = "inline-block";
+
+      messageDiv.remove();
+      addFormattedMessageToUI("ai", accumulatedText);
+      return accumulatedText;
+    } catch (error) {
+      isTyping = false;
+      removeTypingIndicator();
+      console.error("API Error:", error);
+      throw error;
+    }
+  }
+
   // UPDATED: Function to get AI response from OpenRouter API with streaming and letter-by-letter effect.
   // While streaming, we update the message content using getStableRendering so that if a code block is open,
   // it is rendered as a code block immediately.
@@ -314,23 +423,23 @@ document.addEventListener("DOMContentLoaded", () => {
     stopResponseButton.style.display = "inline-block";
 
     try {
+        const lastMessage = chatHistory[chatId].messages[chatHistory[chatId].messages.length - 1];
       const response = await fetch(
-        API_URL,
+        API_URL + "/query",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            messages: chatHistory[chatId].messages,
-            stream: true
+            query: lastMessage.content
           })
         }
       );
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error?.message || "Failed to get response");
+        throw new Error(errorData.detail || "Failed to get response");
       }
 
       // Create a message container for the streaming response
@@ -370,26 +479,24 @@ document.addEventListener("DOMContentLoaded", () => {
         const lines = buffer.split("\n");
         buffer = lines.pop();
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const jsonStr = line.slice("data: ".length).trim();
-            if (jsonStr === "[DONE]") break;
-            try {
-              const obj = JSON.parse(jsonStr);
-              if (obj.choices && obj.choices[0] && obj.choices[0].delta) {
-                const delta = obj.choices[0].delta;
-                const text = (delta.content || "") + (delta.reasoning || "");
-                if (text) {
-                  typingBuffer += text;
-                  if (!isProcessingBuffer) {
-                    isProcessingBuffer = true;
-                    processBuffer();
+            if (line.trim()) {
+                try {
+                  const obj = JSON.parse(line);
+                  if (obj.response) {
+                    const text = obj.response;
+                    if (text) {
+                      typingBuffer += text;
+                      if (!isProcessingBuffer) {
+                        isProcessingBuffer = true;
+                        processBuffer();
+                      }
+                    }
                   }
+                } catch (e) {
+                  // Ignore JSON parse errors
+                  console.error("JSON parse error", e);
                 }
               }
-            } catch (e) {
-              // Ignore JSON parse errors
-            }
-          }
         }
       }
 
